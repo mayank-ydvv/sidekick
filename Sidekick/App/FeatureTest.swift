@@ -409,6 +409,7 @@ enum TalkProbe {
             if !env.agent.steps.isEmpty {
                 print("TALK #\(i) agent \(env.agent.status): " + env.agent.steps.map(\.title).joined(separator: " | "))
             }
+            try? await Task.sleep(nanoseconds: 1_500_000_000)   // let typing/replacing (async) finish before exiting
             if UserDefaults.standard.bool(forKey: "talkOnce"), !isConversation { print("TALK DONE"); fflush(stdout); exit(0) }
             print("TALK #\(i) timings \(env.state.timings.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " "))")
             fflush(stdout)
@@ -523,6 +524,21 @@ enum OCRProbe {
         print("OCR names: " + names.joined(separator: " | "))
         print("OCR prompt: " + (Vocabulary.prompt(screen: names, memory: [], dictionary: []) ?? "-"))
         fflush(stdout)
+        exit(0)
+    }
+}
+
+/// `Sidekick -replaceProbe "text"`: after 1 s, replaces the focused field's text with the inserter's real path.
+@MainActor
+enum ReplaceProbe {
+    static var text = ""
+    @inline(never)
+    static func run() async {
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        let ok = await TextInserter().replace(with: text)
+        print("REPLACE ok=\(ok) clipboard=\(NSPasteboard.general.string(forType: .string)?.prefix(40) ?? "-")")
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        print("REPLACE DONE"); fflush(stdout)
         exit(0)
     }
 }

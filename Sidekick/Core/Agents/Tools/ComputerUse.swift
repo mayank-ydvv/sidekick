@@ -217,11 +217,11 @@ final class ComputerUse: @unchecked Sendable {
 
     static func synthKey(_ code: CGKeyCode, _ flags: CGEventFlags) async {
         await ControlBanner.shared.pulse()
-        let src = CGEventSource(stateID: .combinedSessionState)
+        let src = CGEventSource(stateID: .privateState)
         let down = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: true)
         let up = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: false)
         down?.flags = flags
-        up?.flags = flags
+        up?.flags = []   // release with no modifiers held, or macOS keeps thinking ⌘/⇧ is down (stuck capitals, stalls)
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
     }

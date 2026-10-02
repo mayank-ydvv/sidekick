@@ -61,6 +61,7 @@ final class AppEnvironment {
         dictation = DictationController(state: state, settings: settings, audio: audio, stt: stt,
                                         gemini: gemini, usage: usage, dictionary: dictionary)
         coordinator.onType = { [weak self] text in self?.dictation.type(text) }
+        coordinator.onReplace = { [weak self] text, app in await self?.dictation.replace(text, expectedApp: app) ?? false }
         coordinator.memoryContext = { [memory, skills] text in (memory.promptProfile, memory.promptVolatile, skills.promptText(for: text)) }
         coordinator.listeningHints = { [memory, dictionary] in
             (Vocabulary.fromMemory(memory.profile), dictionary.entries.sorted { $0.hits > $1.hits }.prefix(30).map(\.right))

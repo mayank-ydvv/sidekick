@@ -175,6 +175,11 @@ final class DictationController {
     func type(_ text: String) {
         Task { [inserter] in _ = await inserter.insert(text) }
     }
+
+    /// Replaces the user's selection / focused field (e.g. with a spelling- and grammar-corrected version).
+    func replace(_ text: String, expectedApp: pid_t?) async -> Bool {
+        await inserter.replace(with: text, expectedApp: expectedApp)
+    }
 }
 
 /// Small pill at the bottom-center of the screen with live waveform bars.

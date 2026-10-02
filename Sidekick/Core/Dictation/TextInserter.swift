@@ -80,7 +80,7 @@ final class TextInserter {
         let down = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true)
         let up = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false)
         down?.flags = .maskCommand
-        up?.flags = .maskCommand
+        up?.flags = []   // see keystroke(): never leave ⌘ "held"
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
 
@@ -97,7 +97,96 @@ final class TextInserter {
 
     // MARK: AX helpers
 
+    /// What the user is writing right now: the focused text field's text and their selection (never secure fields).
+    struct FieldSnapshot: Sendable, Equatable {
+        var text: String
+        var selected: String
+        /// The app the user was writing in — replacing only happens if it's still in front.
+        var pid: pid_t = 0
+    }
+
+    static let editableRoles: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
+
+    static func focusedField() -> FieldSnapshot? {
+        guard let el = focusedElement() else { return nil }
+        var role: CFTypeRef?, sub: CFTypeRef?
+        AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
+        AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &sub)
+        guard editableRoles.contains(role as? String ?? ""), (sub as? String) != "AXSecureTextField",
+              let text = value(el), !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        var sel: CFTypeRef?
+        AXUIElementCopyAttributeValue(el, kAXSelectedTextAttribute as CFString, &sel)
+        return FieldSnapshot(text: String(text.prefix(4000)), selected: String(((sel as? String) ?? "").prefix(4000)),
+                             pid: NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0)
+    }
+
+    /// Replaces what the user wrote with `text`: their selection if they selected something, otherwise the whole
+    /// focused field. Uses Accessibility where it works; in Chromium/Electron apps (Chrome, the Claude app, Slack…)
+    /// it selects the field's contents with ⌘A and pastes. Returns false if there's no editable field.
+    func replace(with text: String, expectedApp: pid_t? = nil) async -> Bool {
+        let front = NSWorkspace.shared.frontmostApplication
+        // The user switched apps while we were thinking: never select-and-paste into something else.
+        if let expectedApp, expectedApp != 0, front?.processIdentifier != expectedApp { return false }
+        guard let el = Self.focusedElement() else {
+            // Chromium/Electron field we still can't see: the caret is in the box the user was writing in, so
+            // select its text and paste over it (never insert next to it).
+            guard Self.prefersPaste(front) else { return false }
+            await Self.keystroke(0, .maskCommand)
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            await paste(text)
+            return true
+        }
+        var role: CFTypeRef?, sub: CFTypeRef?
+        AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &role)
+        AXUIElementCopyAttributeValue(el, kAXSubroleAttribute as CFString, &sub)
+        guard Self.editableRoles.contains(role as? String ?? ""), (sub as? String) != "AXSecureTextField" else { return false }
+        let app = NSWorkspace.shared.frontmostApplication
+        let hasSelection = (Self.selectedRange(el)?.length ?? 0) > 0
+        if !Self.prefersPaste(app) {
+            if !hasSelection, let len = Self.value(el).map({ ($0 as NSString).length }) {
+                var r = CFRange(location: 0, length: len)
+                if let range = AXValueCreate(.cfRange, &r) {
+                    AXUIElementSetAttributeValue(el, kAXSelectedTextRangeAttribute as CFString, range)
+                }
+            }
+            if AXUIElementSetAttributeValue(el, kAXSelectedTextAttribute as CFString, text as CFString) == .success,
+               Self.value(el)?.contains(text) == true { return true }
+            if !hasSelection, AXUIElementSetAttributeValue(el, kAXValueAttribute as CFString, text as CFString) == .success,
+               Self.value(el) == text { return true }
+        }
+        // Chromium/Electron fields ignore AX writes: select the field's text (unless the user selected some) and paste.
+        if !hasSelection { await Self.keystroke(0, .maskCommand) }   // ⌘A
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        await paste(text)
+        return true
+    }
+
+    static func keystroke(_ key: CGKeyCode, _ flags: CGEventFlags) async {
+        await ComputerUse.waitForModifiersReleased()
+        let src = CGEventSource(stateID: .privateState)
+        let down = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: true)
+        let up = CGEvent(keyboardEventSource: src, virtualKey: key, keyDown: false)
+        down?.flags = flags
+        up?.flags = []   // release with no modifiers held, or macOS keeps thinking ⌘/⇧ is down (stuck capitals, stalls)
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
+    }
+
     static func focusedElement() -> AXUIElement? {
+        if let el = systemFocused() { return el }
+        // Chromium/Electron apps (Chrome, the Claude app, Slack, VS Code…) only build their accessibility tree when
+        // asked: switch it on for the frontmost app, then ask again.
+        guard let app = NSWorkspace.shared.frontmostApplication, prefersPaste(app) else { return nil }
+        let appEl = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetAttributeValue(appEl, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        if let el = systemFocused() { return el }
+        var v: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appEl, kAXFocusedUIElementAttribute as CFString, &v) == .success,
+           let v, CFGetTypeID(v) == AXUIElementGetTypeID() { return (v as! AXUIElement) }
+        return nil
+    }
+
+    private static func systemFocused() -> AXUIElement? {
         let system = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(system, 0.2)
         var v: CFTypeRef?

@@ -81,4 +81,10 @@ final class TagParserTests: XCTestCase {
         XCTAssertEqual(TagParser.parse("POINT y=412, x=733."), .point(y: 412, x: 733, label: nil))
         XCTAssertEqual(TagParser.parse("circle x=1 y=2"), .circle(y: 2, x: 1, r: nil, label: nil))
     }
+
+    func testReplaceTag() {
+        var p = TagParser()
+        let events = p.push("Done, fixed it. [REPLACE text=\"I want to know about the weather today.\"]")
+        XCTAssertTrue(events.contains(.tag(.replace(text: "I want to know about the weather today."))), "\(events)")
+    }
 }

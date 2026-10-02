@@ -12,6 +12,8 @@ enum OverlayTag: Equatable, Sendable {
     case escalate
     case agent(task: String)
     case type(text: String)
+    /// Replace the text the user wrote (their selection, or the whole focused field) — e.g. a corrected version.
+    case replace(text: String)
     case setting(key: String, value: String)
 }
 
@@ -119,6 +121,9 @@ struct TagParser {
         case "TYPE":
             guard let t = attrs["text"] else { return nil }
             return .type(text: t)
+        case "REPLACE":
+            guard let t = attrs["text"] else { return nil }
+            return .replace(text: t)
         case "SETTING":
             guard let k = attrs["key"], let v = attrs["value"] else { return nil }
             return .setting(key: k, value: v)

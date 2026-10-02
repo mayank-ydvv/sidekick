@@ -16,6 +16,8 @@ struct ScreenContext: @unchecked Sendable {
     var mouse: CGPoint
     /// Name-like words read off the screen (filled while the user is still talking; biases speech recognition).
     var vocabulary: [String] = []
+    /// The text field the user was writing in when they pressed the hotkey (for "correct what I wrote").
+    var field: TextInserter.FieldSnapshot?
 }
 
 /// Captures the display under the cursor via ScreenCaptureKit, excluding Sidekick's own windows.

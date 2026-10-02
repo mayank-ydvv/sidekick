@@ -9,6 +9,11 @@ final class TalkCoordinator {
     private let audio: AudioCapture
     /// Screen-aware writing: called with the text of a [TYPE] tag.
     var onType: ((String) -> Void)?
+    /// Replaces the user's selection / focused field; returns false when there's no editable field.
+    var onReplace: ((String, pid_t?) async -> Bool)?
+    /// The text field the user was writing in when they pressed the talk hotkey.
+    private var fieldAtPress: TextInserter.FieldSnapshot?
+    private var pressFrontApp: pid_t?
     /// Memory files for the prompt (profile, volatile, active skills).
     var memoryContext: (String) -> (profile: String, volatile: String, skills: String) = { _ in ("", "", "") }
     /// Names from memory and words from the personal dictionary, to help Whisper spell them.
@@ -121,6 +126,9 @@ final class TalkCoordinator {
 
     private func armed() {
         tArmed = now
+        // What the user is writing right now (before our UI can move focus): lets "correct what I wrote" work.
+        fieldAtPress = TextInserter.focusedField()
+        pressFrontApp = NSWorkspace.shared.frontmostApplication?.processIdentifier
         // Barge-in: stop anything in flight before listening again.
         if pipeline != nil || tts.isSpeaking { cancelAll() }
         overlay.clearAnnotations()
@@ -187,6 +195,8 @@ final class TalkCoordinator {
 
     /// Feature test: a typed question through the exact voice pipeline (screenshot + prompt + stream + tags).
     func askText(_ text: String) async {
+        fieldAtPress = TextInserter.focusedField()
+        pressFrontApp = NSWorkspace.shared.frontmostApplication?.processIdentifier
         tReleased = now
         state.timings = [:]
         state.transcript = text
@@ -397,6 +407,11 @@ final class TalkCoordinator {
         var prompt = userText
         if inked { prompt += "\n(The user drew red ink on the screenshot to mark an area. Focus on the marked area.)" }
         if teaching.isActive, let step = teaching.stepLabel { prompt += "\n(We're in a step-by-step lesson, currently on \(step).)" }
+        if let f = fieldAtPress {
+            prompt += f.selected.isEmpty
+                ? "\n(Text in the field the user is writing in: «\(f.text)»)"
+                : "\n(The user selected this text in the field they're writing in: «\(f.selected)»)"
+        }
 
         var tier = forced ?? ModelRouter.route(userText, mode: settings.data.modelTier)
         if tier == .smart, smartUnavailable { tier = .fast }
@@ -456,8 +471,9 @@ final class TalkCoordinator {
                         escalate = true
                         break stream
                     case .tag(let tag):
+                        if DebugFlags.verbose { print("TAG \(tag)"); fflush(stdout) }
                         switch tag {
-                        case .agent, .type, .setting: tookAction = true
+                        case .agent, .type, .replace, .setting: tookAction = true
                         default: break
                         }
                         if let t = handle(tag, screen: shot) { annotationTasks.append(t) }
@@ -648,6 +664,24 @@ final class TalkCoordinator {
             break   // already on the smart model
         case .type(let text):
             onType?(text)
+        case .replace(let text):
+            let onReplace = onReplace
+            let pressApp = fieldAtPress?.pid ?? pressFrontApp
+            Task { [weak self] in
+                guard let self else { return }
+                let ok = await onReplace?(text, pressApp) == true
+                Log.app.notice("replace ok=\(ok, privacy: .public) chars=\(text.count, privacy: .public)")
+                if DebugFlags.verbose { print("REPLACE handled ok=\(ok) text=\(text.prefix(60))"); fflush(stdout) }
+                if ok { return }
+                if let pressApp, pressApp != 0, NSWorkspace.shared.frontmostApplication?.processIdentifier != pressApp {
+                    // They switched apps: keep the corrected text safe on the clipboard instead of pasting it elsewhere.
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    self.show(message: "you switched apps — the corrected text is on your clipboard")
+                } else {
+                    self.onType?(text)   // no editable field: type it where the cursor is
+                }
+            }
         case .setting(let key, let value):
             if let change = SettingsMap.prepare(key: key, value: value, current: settings.data) {
                 pendingSetting = change

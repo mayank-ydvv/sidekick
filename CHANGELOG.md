@@ -378,3 +378,10 @@ Found by running every feature against the live Gemini API (`-featureTest`, `-ge
 - Agent typing: one character per event from a private event source with no modifier flags, after held modifiers are released — no more all-caps or shortcut keystrokes; works in apps that read only the first character of a multi-character event.
 - ALL-CAPS text from the model is typed in normal case ("Ravi Sharma", "Hey") unless the user asked for capitals; typed text is shown in the task steps.
 - Talk/agent prompts know transcripts can mishear names and short words; agents retry searches with shorter/similar spellings.
+
+## 0.11.6 — "Correct what I wrote" replaces instead of appending
+- New [REPLACE] action: corrections replace your selection, or the whole field you were writing in, instead of being typed next to it.
+- The focused field's text (never password fields) is read when you press the talk keys and given to the model; the prompt asks for minimal fixes only (misspellings + grammar, same words/meaning/tone).
+- Chromium/Electron apps (Chrome, the Claude app, Slack, VS Code…): accessibility is switched on for the app so its fields can be read; otherwise select-all + paste in that field.
+- Only replaces in the app you spoke from; if you switched apps, the corrected text goes to the clipboard instead.
+- Fixed synthetic shortcuts (⌘A, ⌘V, agent key presses) releasing with modifiers still "held" — this left ⌘/⇧ stuck (likely cause of earlier all-caps typing) and stalled pastes.
