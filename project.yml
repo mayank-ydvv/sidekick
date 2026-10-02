@@ -1,0 +1,95 @@
+name: Sidekick
+options:
+  bundleIdPrefix: com.mayankyadav
+  deploymentTarget:
+    macOS: "14.2"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.2"
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+packages:
+  GRDB:
+    path: Vendor/GRDB
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit.git
+    from: 1.1.0
+targets:
+  Sidekick:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sidekick
+    resources: []
+    dependencies:
+      - package: WhisperKit
+      - package: GRDB
+      # Neural voice engine (sherpa-onnx), embedded in Contents/Frameworks.
+      - framework: Vendor/sherpa/lib/libsherpa-onnx-c-api.dylib
+        embed: true
+        codeSign: false
+      - framework: Vendor/sherpa/lib/libonnxruntime.dylib
+        embed: true
+        codeSign: false
+    info:
+      path: Sidekick/Info.plist
+      properties:
+        CFBundleDisplayName: Sidekick
+        CFBundleShortVersionString: "0.9.0"
+        CFBundleVersion: "1"
+        LSUIElement: true
+        LSMinimumSystemVersion: "14.2"
+        NSMicrophoneUsageDescription: "Sidekick listens while you hold the talk hotkey so it can understand your question."
+        NSScreenCaptureUsageDescription: "Sidekick looks at your screen only while you hold the talk hotkey, so it can answer questions about what you see."
+        NSAppleEventsUsageDescription: "Sidekick reads the current browser tab URL and can create notes when you ask it to."
+        NSCalendarsFullAccessUsageDescription: "Sidekick reads and adds calendar events when you ask it to."
+        NSRemindersFullAccessUsageDescription: "Sidekick reads and adds reminders when you ask it to."
+        NSHumanReadableCopyright: "© 2026 Mayank Yadav"
+    entitlements:
+      path: Sidekick/Sidekick.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+        com.apple.security.device.audio-input: true
+        com.apple.security.automation.apple-events: true
+        com.apple.security.personal-information.calendars: true
+        # The bundled voice engine dylibs are signed with the local self-signed identity (no Team ID).
+        com.apple.security.cs.disable-library-validation: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mayankyadav.sidekick
+        ENABLE_HARDENED_RUNTIME: YES
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        SWIFT_STRICT_CONCURRENCY: minimal
+        ENABLE_DEBUG_DYLIB: NO
+        SWIFT_INCLUDE_PATHS: $(PROJECT_DIR)/Vendor/sherpa/include
+        LIBRARY_SEARCH_PATHS: $(PROJECT_DIR)/Vendor/sherpa/lib
+        LD_RUNPATH_SEARCH_PATHS: "@executable_path/../Frameworks"
+        # The voice engine ships for Apple silicon only.
+        ARCHS: arm64
+  SidekickTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: SidekickTests
+    dependencies:
+      - target: Sidekick
+    settings:
+      base:
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Sidekick.app/Contents/MacOS/Sidekick"
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_INCLUDE_PATHS: $(PROJECT_DIR)/Vendor/sherpa/include
+schemes:
+  Sidekick:
+    build:
+      targets:
+        Sidekick: all
+        SidekickTests: [test]
+    test:
+      targets:
+        - SidekickTests
+      gatherCoverageData: false
