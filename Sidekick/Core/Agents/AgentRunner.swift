@@ -172,7 +172,7 @@ final class AgentRunner {
         let ctx = ToolContext(outputFolder: outputFolder,
                               allowedFolders: settings.data.agentFolders.map { URL(fileURLWithPath: $0) },
                               gemini: gemini, searchModel: settings.data.fastModel, fallbackModel: settings.data.cheapModel,
-                              preferredBrowser: LocalTools.browserMentioned(in: task))
+                              preferredBrowser: LocalTools.browserMentioned(in: task), task: task)
         let df = DateFormatter(); df.dateFormat = "EEEE d MMMM yyyy, HH:mm"
         let system = Self.loadPrompt()
             .replacingOccurrences(of: "{DATE}", with: df.string(from: Date()))

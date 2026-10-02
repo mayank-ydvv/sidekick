@@ -73,7 +73,9 @@ final class TextInserter {
         pb.setString(text, forType: .string)
         let ourChange = pb.changeCount
 
-        let src = CGEventSource(stateID: .combinedSessionState)
+        // A still-held ⌃/⌥ (from the dictation or talk hotkey) would turn ⌘V into another shortcut.
+        await ComputerUse.waitForModifiersReleased()
+        let src = CGEventSource(stateID: .privateState)
         let vKey: CGKeyCode = 9
         let down = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true)
         let up = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false)

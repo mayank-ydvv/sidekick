@@ -505,3 +505,24 @@ enum TypeProbe {
         exit(0)
     }
 }
+
+/// `Sidekick -ocrProbe YES`: screenshot + on-screen names (the Whisper hints), with timings.
+@MainActor
+enum OCRProbe {
+    @inline(never)
+    static func run(env: AppEnvironment) async {
+        let tw = CFAbsoluteTimeGetCurrent()
+        Vocabulary.prewarm()
+        print("OCR prewarm \(Int((CFAbsoluteTimeGetCurrent() - tw) * 1000))ms")
+        let t0 = CFAbsoluteTimeGetCurrent()
+        guard let shot = try? await env.capturer.capture(readBrowserURL: false) else { print("OCR capture failed"); exit(1) }
+        let t1 = CFAbsoluteTimeGetCurrent()
+        let names = Vocabulary.fromScreen(shot.image)
+        let t2 = CFAbsoluteTimeGetCurrent()
+        print("OCR app=\(shot.appName ?? "?") capture=\(Int((t1 - t0) * 1000))ms ocr=\(Int((t2 - t1) * 1000))ms")
+        print("OCR names: " + names.joined(separator: " | "))
+        print("OCR prompt: " + (Vocabulary.prompt(screen: names, memory: [], dictionary: []) ?? "-"))
+        fflush(stdout)
+        exit(0)
+    }
+}

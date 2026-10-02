@@ -32,6 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { await SearchProbe.run(env: env, query: q) }
             return
         }
+        if UserDefaults.standard.bool(forKey: "ocrProbe") {
+            Task { await OCRProbe.run(env: env) }
+            return
+        }
         if let t = UserDefaults.standard.string(forKey: "typeProbe") {
             TypeProbe.text = String(decoding: Array(t.utf8), as: UTF8.self)
             Task { await TypeProbe.run() }

@@ -23,6 +23,8 @@ struct ToolContext: Sendable {
     var fallbackModel: String? = nil
     /// A browser the user named in the task ("…on chrome"): web links open there even if the model forgets to say so.
     var preferredBrowser: String? = nil
+    /// The user's own request (used e.g. to keep capitals they actually asked for).
+    var task: String = ""
 }
 
 /// One callable tool: name + JSON schema (OpenAPI subset Gemini understands) + implementation.
@@ -41,6 +43,10 @@ struct AgentTool: Sendable {
 
     /// Human-readable one-liner for the agent card and confirmations.
     func summary(_ args: [String: Any]) -> String {
+        // Typed text is shown too (so a wrong "H" is visible), unless it looks like a secret.
+        if name == "ui_type", let t = args["text"] as? String {
+            return ComputerUse.looksSensitive(t) ? "ui_type: ••••" : "ui_type: \"\(t.prefix(60))\""
+        }
         let keys = ["command", "path", "url", "query", "app", "title", "name", "filename"]
         for k in keys { if let v = args[k] as? String { return "\(name): \(v.prefix(80))" } }
         return name

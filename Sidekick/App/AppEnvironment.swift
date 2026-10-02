@@ -62,6 +62,9 @@ final class AppEnvironment {
                                         gemini: gemini, usage: usage, dictionary: dictionary)
         coordinator.onType = { [weak self] text in self?.dictation.type(text) }
         coordinator.memoryContext = { [memory, skills] text in (memory.promptProfile, memory.promptVolatile, skills.promptText(for: text)) }
+        coordinator.listeningHints = { [memory, dictionary] in
+            (Vocabulary.fromMemory(memory.profile), dictionary.entries.sorted { $0.hits > $1.hits }.prefix(30).map(\.right))
+        }
         chat.activeSkills = { [skills] text in skills.promptText(for: text) }
         configure(agent)
         suggester.makeRunner = { [unowned self] in
@@ -186,6 +189,7 @@ final class AppEnvironment {
         installHotkeysIfNeeded()
         loadWhisper(settings.data.whisperModel)
         Task { await capturer.warm() }
+        Task.detached(priority: .utility) { Vocabulary.prewarm() }
         Task { await gemini.preconnect() }
         coordinator.prewarm()
         coordinator.overlay.start()

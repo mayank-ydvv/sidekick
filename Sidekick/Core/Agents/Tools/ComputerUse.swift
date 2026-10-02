@@ -69,9 +69,10 @@ final class ComputerUse: @unchecked Sendable {
         parameters: Schema.object(["text": Schema.string("Text to type"), "id": Schema.integer("Element id (optional)"),
                                    "submit": Schema.string("\"true\" to press Return afterwards")], required: ["text"]),
         requiresConfirmation: { _, _ in false },
-        run: { args, _ in
-            guard let text = args["text"] as? String else { return .error("missing text") }
-            if looksSensitive(text) { return .error("i don't type passwords, card numbers or codes") }
+        run: { args, ctx in
+            guard let raw = args["text"] as? String else { return .error("missing text") }
+            if looksSensitive(raw) { return .error("i don't type passwords, card numbers or codes") }
+            let text = normalCase(raw, request: ctx.task)
             var target = (args["id"] as? Int).flatMap { shared.ref($0) }
             if let t = target { AXUIElementSetAttributeValue(t, kAXFocusedAttribute as CFString, kCFBooleanTrue) }
             if target == nil { target = await MainActor.run { TextInserter.focusedElement() } }
@@ -162,19 +163,56 @@ final class ComputerUse: @unchecked Sendable {
         if let original { try? await Task.sleep(nanoseconds: 30_000_000); CGWarpMouseCursorPosition(original) }
     }
 
+    /// Types text one character per event from a private event source with no modifier flags, so a held key
+    /// (Shift, Caps Lock, or ⌃⌥ still down from push-to-talk) can never turn it into capitals or shortcuts, and apps
+    /// that read only the first character of a multi-character event still get every letter.
     static func synthType(_ text: String) async {
         await ControlBanner.shared.pulse()
-        let src = CGEventSource(stateID: .combinedSessionState)
-        for chunk in text.chunked(20) {
-            let utf16 = Array(chunk.utf16)
+        await waitForModifiersReleased()
+        let src = CGEventSource(stateID: .privateState)
+        for ch in text {
+            let utf16 = Array(String(ch).utf16)
             let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true)
             let up = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false)
-            down?.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
-            up?.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
+            for e in [down, up] {
+                e?.flags = []
+                e?.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: utf16)
+            }
             down?.post(tap: .cghidEventTap)
             up?.post(tap: .cghidEventTap)
-            try? await Task.sleep(nanoseconds: 8_000_000)
+            try? await Task.sleep(nanoseconds: 4_000_000)
         }
+    }
+
+    /// Waits (up to 1.5 s) until the user lets go of ⌘ ⌃ ⌥ ⇧ — typing while they're held produces shortcuts or capitals.
+    static func waitForModifiersReleased() async {
+        let held: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+        for _ in 0..<30 {
+            if CGEventSource.flagsState(.combinedSessionState).intersection(held).isEmpty { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+    }
+
+    /// The model sometimes writes "RAVI SHARMA" or "HEY". Unless the user asked for those capitals, type them
+    /// normally: short names/phrases get Title Case ("Ravi Sharma", "Hey"), longer text gets sentence case.
+    nonisolated static func normalCase(_ text: String, request: String) -> String {
+        let letters = text.filter(\.isLetter)
+        guard letters.count >= 2, letters.allSatisfy({ $0.isUppercase || !$0.isCased }), letters.contains(where: \.isCased) else { return text }
+        // Keep capitals the user typed/said themselves ("type NASA", "send OK").
+        let asked = request.split(whereSeparator: { !$0.isLetter }).map(String.init)
+        let words = text.split(whereSeparator: { !$0.isLetter }).map(String.init).filter { !$0.isEmpty }
+        if !words.isEmpty, words.allSatisfy({ w in asked.contains(w) }) { return text }
+        if words.count <= 4 {
+            return text.lowercased().split(separator: " ", omittingEmptySubsequences: false)
+                .map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " ")
+        }
+        var out = ""
+        var capNext = true
+        for ch in text.lowercased() {
+            if capNext, ch.isLetter { out += ch.uppercased(); capNext = false } else { out.append(ch) }
+            if ".!?".contains(ch) { capNext = true }
+        }
+        return out.replacingOccurrences(of: #"\bi\b"#, with: "I", options: .regularExpression)
     }
 
     static func synthKey(_ code: CGKeyCode, _ flags: CGEventFlags) async {

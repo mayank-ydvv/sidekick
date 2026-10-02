@@ -14,6 +14,8 @@ struct ScreenContext: @unchecked Sendable {
     var windowTitle: String?
     var url: String?
     var mouse: CGPoint
+    /// Name-like words read off the screen (filled while the user is still talking; biases speech recognition).
+    var vocabulary: [String] = []
 }
 
 /// Captures the display under the cursor via ScreenCaptureKit, excluding Sidekick's own windows.

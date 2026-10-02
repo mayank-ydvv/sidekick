@@ -11,6 +11,8 @@ final class TalkCoordinator {
     var onType: ((String) -> Void)?
     /// Memory files for the prompt (profile, volatile, active skills).
     var memoryContext: (String) -> (profile: String, volatile: String, skills: String) = { _ in ("", "", "") }
+    /// Names from memory and words from the personal dictionary, to help Whisper spell them.
+    var listeningHints: () -> (memory: [String], dictionary: [String]) = { ([], []) }
     /// Called after each finished voice exchange (text only).
     var onTurnFinished: ((ConversationTurn, String, TokenUsage?, Double) -> Void)?
     /// [AGENT task="…"] → hand off (task, recent conversation as text).
@@ -134,7 +136,12 @@ final class TalkCoordinator {
         let readURL = settings.data.readBrowserURL
         let capturer = capturer
         captureTask = Task.detached(priority: .userInitiated) {
-            do { return try await capturer.capture(readBrowserURL: readURL) }
+            do {
+                // Read names off the screen while the user is still speaking (helps Whisper spell them).
+                var shot = try await capturer.capture(readBrowserURL: readURL)
+                shot.vocabulary = Vocabulary.fromScreen(shot.image)
+                return shot
+            }
             catch {
                 Log.screen.error("capture failed: \(error.localizedDescription, privacy: .public)")
                 return nil
@@ -225,16 +232,49 @@ final class TalkCoordinator {
 
     /// Whisper drops very short clips (a one-word "yes" is under a second): pad them with silence to 1.5 s, and if a
     /// short clip still comes back empty, retry it as English (language detection is unreliable on tiny clips).
-    private func transcribeUtterance(_ trimmed: [Float]) async throws -> String {
+    private func transcribeUtterance(_ trimmed: [Float], prompt: String? = nil) async throws -> String {
         let lang = settings.data.language.isEmpty ? nil : settings.data.language
         let rate = Int(AudioCapture.sampleRate)
         let short = trimmed.count < rate * 3 / 2
         let audio = short ? Self.padShort(trimmed, to: 1.5) : trimmed
-        let raw = try await stt.transcribe(audio, language: lang, prompt: nil)
+        // Vocabulary hints help names in real sentences; one-word answers ("yes") are safer without them.
+        let hint = short ? nil : prompt
+        var raw = try await stt.transcribe(audio, language: lang, prompt: hint)
+        // Whisper occasionally just repeats the hint list instead of transcribing: retry without it.
+        if let hint, Self.echoesPrompt(raw, hint) { raw = try await stt.transcribe(audio, language: lang, prompt: nil) }
         if short, lang == nil, Self.cleanTranscript(raw).count < 2 {
             return try await stt.transcribe(audio, language: "en", prompt: nil)
         }
         return raw
+    }
+
+    /// The Whisper hint list for this turn: names on screen (read while the user spoke) + memory + dictionary.
+    /// Waits at most 0.3 s for the screenshot so short questions don't get slower.
+    private func listeningPrompt(_ capture: Task<ScreenContext?, Never>?) async -> String? {
+        var screen: [String] = []
+        if let capture {
+            let shot = await withTaskGroup(of: ScreenContext??.self) { g in
+                g.addTask { await capture.value }
+                g.addTask { try? await Task.sleep(nanoseconds: 300_000_000); return .some(nil) }
+                let first = await g.next() ?? nil
+                g.cancelAll()
+                return first ?? nil
+            }
+            screen = shot?.vocabulary ?? []
+        }
+        let hints = listeningHints()
+        let p = Vocabulary.prompt(screen: screen, memory: hints.memory, dictionary: hints.dictionary)
+        if let p { state.timings["listening hints"] = p.split(separator: ",").count }
+        return p
+    }
+
+    nonisolated static func echoesPrompt(_ transcript: String, _ prompt: String) -> Bool {
+        let t = transcript.lowercased().trimmingCharacters(in: .whitespacesAndNewlines.union(.punctuationCharacters))
+        guard !t.isEmpty else { return false }
+        let hints = prompt.lowercased().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces.union(.punctuationCharacters)) }
+        let words = t.split(separator: " ").count
+        let matched = hints.filter { t.contains($0) }.count
+        return matched >= 3 && matched * 2 >= max(1, words / 2)
     }
 
     nonisolated static func padShort(_ s: [Float], to seconds: Double) -> [Float] {
@@ -249,7 +289,8 @@ final class TalkCoordinator {
         let trimmed = VAD.trimSilence(samples)
         let secs = String(format: "%.2fs", Double(trimmed.count) / AudioCapture.sampleRate)
         guard trimmed.count >= Int(AudioCapture.sampleRate * 0.25) else { return "trimmed to \(secs) → DIDN'T CATCH (too short)" }
-        let raw = (try? await transcribeUtterance(trimmed)) ?? "(error)"
+        let hint = UserDefaults.standard.string(forKey: "sttHint")
+        let raw = (try? await transcribeUtterance(trimmed, prompt: hint)) ?? "(error)"
         let text = Self.cleanTranscript(raw)
         return "trimmed to \(secs) · whisper=\"\(raw)\" · cleaned=\"\(text)\"" + (text.count >= 2 ? "" : " → DIDN'T CATCH")
     }
@@ -269,7 +310,7 @@ final class TalkCoordinator {
         let sttStart = now
         let text: String
         do {
-            text = Self.cleanTranscript(try await transcribeUtterance(trimmed))
+            text = Self.cleanTranscript(try await transcribeUtterance(trimmed, prompt: await listeningPrompt(capture)))
         } catch {
             return show(message: Friendly.message(error))
         }

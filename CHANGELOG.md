@@ -372,3 +372,9 @@ Found by running every feature against the live Gemini API (`-featureTest`, `-ge
 - App lookup understands short names and aliases (chrome, vs code, word, edge…) and finds apps anywhere via Spotlight.
 - Bare domains ("github.com") open as https links.
 - Test hook fix: an optimized-build crash in the talk probe (array ternary in an async function) — pattern not used in app code.
+
+## 0.11.5 — Better listening and typing
+- Whisper gets vocabulary hints: names read off the screen while you speak (Vision OCR, ~90 ms), names from memory and the personal dictionary. Measured on spoken test sentences: "Ravi Sharma", "Priya Mehta", "WhatsApp", "Rahul" now spelled right (were "raw sharma", "VHARTS app", "Rahool"). One-word answers skip hints (still 24/24).
+- Agent typing: one character per event from a private event source with no modifier flags, after held modifiers are released — no more all-caps or shortcut keystrokes; works in apps that read only the first character of a multi-character event.
+- ALL-CAPS text from the model is typed in normal case ("Ravi Sharma", "Hey") unless the user asked for capitals; typed text is shown in the task steps.
+- Talk/agent prompts know transcripts can mishear names and short words; agents retry searches with shorter/similar spellings.
