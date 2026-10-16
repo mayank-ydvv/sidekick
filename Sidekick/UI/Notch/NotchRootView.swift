@@ -34,7 +34,13 @@ struct NotchRootView: View {
                         .accessibilityHidden(!ui.isOpen)
                 }
                 if !ui.isOpen {
-                    if ui.activity == .none { closedBadge } else { ActivityView(ui: ui).frame(width: shapeSize.width, height: shapeSize.height) }
+                    if ui.activity != .none {
+                        ActivityView(ui: ui).frame(width: shapeSize.width, height: shapeSize.height)
+                    } else if let island = ui.island, ui.islandLayout != nil {
+                        IslandClosedView(hub: island, ui: ui).frame(width: shapeSize.width, height: shapeSize.height)
+                    } else {
+                        closedBadge
+                    }
                 }
                 if ui.size == .compact || ui.size == .expanded {
                     resizeHandles.frame(width: shapeSize.width, height: shapeSize.height)
@@ -44,6 +50,25 @@ struct NotchRootView: View {
                    height: max(shapeSize.height, ui.isOpen ? ui.contentSize.height : 0), alignment: .top)
             .contentShape(shape.size(shapeSize))
             .onTapGesture { if !ui.isOpen { controller.open(.compact, focus: true) } }
+            // Drag files onto the notch to put them on the shelf.
+            .onDrop(of: [.fileURL], isTargeted: Binding(get: { ui.island?.dragActive ?? false }, set: { over in
+                guard let island = ui.island else { return }
+                island.dragActive = over
+                if over, !ui.isOpen { controller.open(.peek) }
+            })) { providers in
+                guard let island = ui.island else { return false }
+                for p in providers {
+                    _ = p.loadObject(ofClass: URL.self) { url, _ in
+                        guard let url else { return }
+                        DispatchQueue.main.async {
+                            island.shelf.add([url])
+                            island.show(.init(kind: .shelf(count: island.shelf.items.count), duration: 2))
+                        }
+                    }
+                }
+                island.dragActive = false
+                return true
+            }
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -57,6 +82,8 @@ struct NotchRootView: View {
 
     @ViewBuilder private var content: some View {
         switch ui.size {
+        case .peek where ui.island?.hasCards == true:
+            IslandCardsView(hub: ui.island!) { controller.open(.compact, focus: true) }
         case .peek: controller.content().environment(\.notchPeek, true)
         default: controller.content()
         }

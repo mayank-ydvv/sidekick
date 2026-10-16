@@ -160,7 +160,7 @@ final class NotchAndChatTests: XCTestCase {
     func testVirtualNotchOnExternalDisplay() {
         let g = NotchGeometry.forScreen(frame: CGRect(x: 1512, y: 0, width: 1920, height: 1080), auxLeft: nil, auxRight: nil, safeTop: 0)
         XCTAssertTrue(g.isVirtual)
-        XCTAssertEqual(g.rect, CGRect(x: 1512 + 960 - 90, y: 1048, width: 180, height: 32))
+        XCTAssertEqual(g.rect, CGRect(x: 1512 + 960 - 95, y: 1048, width: 190, height: 32))
     }
 
     func testChatSections() {

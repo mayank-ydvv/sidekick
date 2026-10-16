@@ -14,6 +14,10 @@ enum OverlayTag: Equatable, Sendable {
     case type(text: String)
     /// Replace the text the user wrote (their selection, or the whole focused field) — e.g. a corrected version.
     case replace(text: String)
+    /// Island timers / stopwatch / media controls.
+    case timer(seconds: Double?, label: String?, action: String?)
+    case stopwatch(action: String)
+    case media(action: String)
     case setting(key: String, value: String)
 }
 
@@ -124,6 +128,15 @@ struct TagParser {
         case "REPLACE":
             guard let t = attrs["text"] else { return nil }
             return .replace(text: t)
+        case "TIMER":
+            let secs = num("seconds") ?? num("minutes").map { $0 * 60 }
+            guard secs != nil || attrs["action"] != nil else { return nil }
+            return .timer(seconds: secs, label: attrs["label"], action: attrs["action"])
+        case "STOPWATCH":
+            return .stopwatch(action: attrs["action"] ?? "start")
+        case "MEDIA":
+            guard let a = attrs["action"] else { return nil }
+            return .media(action: a)
         case "SETTING":
             guard let k = attrs["key"], let v = attrs["value"] else { return nil }
             return .setting(key: k, value: v)

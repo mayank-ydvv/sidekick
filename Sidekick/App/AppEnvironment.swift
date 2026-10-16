@@ -28,6 +28,10 @@ final class AppEnvironment {
     let skills = SkillLibrary()
     let mcp = MCPManager()
     let quiet = QuietModeDetector()
+    /// Dynamic Island: music, timers, meetings, system alerts and the file shelf in the notch.
+    let island = IslandHub()
+    private var islandWatchers: SystemWatchers?
+    private var meetingWatcher: MeetingWatcher?
     let suggester: ProactiveSuggester
     private var controlTaps = TapCounter()
     private(set) var agentCard: AgentCardController!
@@ -62,6 +66,8 @@ final class AppEnvironment {
                                         gemini: gemini, usage: usage, dictionary: dictionary)
         coordinator.onType = { [weak self] text in self?.dictation.type(text) }
         coordinator.onReplace = { [weak self] text, app in await self?.dictation.replace(text, expectedApp: app) ?? false }
+        coordinator.onIsland = { [weak self] tag in self?.handleIsland(tag) }
+        coordinator.onSTTNotReady = { [weak self] in self?.ensureWhisper() }
         coordinator.memoryContext = { [memory, skills] text in (memory.promptProfile, memory.promptVolatile, skills.promptText(for: text)) }
         coordinator.listeningHints = { [memory, dictionary] in
             (Vocabulary.fromMemory(memory.profile), dictionary.entries.sorted { $0.hits > $1.hits }.prefix(30).map(\.right))
@@ -219,12 +225,47 @@ final class AppEnvironment {
         state.hotkeyInstalled = hotkeys.start()
     }
 
+    private var whisperRetries = 0
+    private var whisperWakeObserver: Any?
+
     func loadWhisper(_ model: WhisperModel) {
         let state = state
-        Task.detached(priority: .utility) { [stt] in
+        Task.detached(priority: .utility) { [stt, weak self] in
             await stt.load(model) { s in
-                Task { @MainActor in state.whisper = s }
+                Task { @MainActor in
+                    state.whisper = s
+                    if case .failed = s { self?.retryWhisper(model) }
+                    if s == .ready { self?.whisperRetries = 0 }
+                }
             }
+        }
+        // After sleep (or if a load failed while offline), make sure the model is there.
+        if whisperWakeObserver == nil {
+            whisperWakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.ensureWhisper() }
+            }
+        }
+    }
+
+    /// Retries a failed load with backoff (5 s, 15 s, 45 s… up to every 2 minutes).
+    private func retryWhisper(_ model: WhisperModel) {
+        whisperRetries += 1
+        let delay = min(120, 5 * pow(3, Double(min(whisperRetries - 1, 4))))
+        Log.stt.notice("whisper load failed; retrying in \(Int(delay), privacy: .public)s")
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, model == self.settings.data.whisperModel else { return }
+            self.ensureWhisper()
+        }
+    }
+
+    /// Loads the speech model if it isn't ready (no-op when it is or a load is running).
+    func ensureWhisper() {
+        let model = settings.data.whisperModel
+        Task { [stt, weak self] in
+            if await stt.isReady { return }
+            if await stt.isLoading { return }
+            self?.loadWhisper(model)
         }
     }
 
@@ -310,10 +351,119 @@ final class AppEnvironment {
         notch.isStreaming = { [weak self] in self?.chat.isStreaming ?? false }
         notch.hoverEnabled = { [weak self] in self?.settings.data.peekOnHover ?? true }
         notch.onOpen = { [weak self] in self?.suggester.markOpened() }
+        notch.ui.island = island
         notch.start()
         notch.restorePopOutIfNeeded()
         observeUnread()
         observeActivity()
+        startIsland()
+    }
+
+    // MARK: Dynamic Island
+
+    private func startIsland() {
+        island.start(settings: settings)
+        let watchers = SystemWatchers(hub: island, settings: settings)
+        watchers.ownMicActive = { [weak self] in
+            guard let self else { return false }
+            return self.audio.isRunning || self.alwaysOn.active || self.dictation.isBusy
+        }
+        watchers.start()
+        islandWatchers = watchers
+        let meetings = MeetingWatcher(hub: island)
+        meetings.start()
+        meetingWatcher = meetings
+        // Volume / brightness keys: handled here so the level shows in the notch (macOS handles them if we can't).
+        hotkeys.onMediaKey = { [weak self, weak watchers] key, fine in
+            guard let self, let watchers, self.settings.data.islandKeys, self.settings.data.islandMedia else { return false }
+            switch key {
+            case .volumeUp: return watchers.handleVolumeKey(up: true, fine: fine)
+            case .volumeDown: return watchers.handleVolumeKey(up: false, fine: fine)
+            case .mute: return watchers.handleVolumeKey(up: nil, fine: fine)
+            case .brightnessUp: return watchers.handleBrightnessKey(up: true, fine: fine)
+            case .brightnessDown: return watchers.handleBrightnessKey(up: false, fine: fine)
+            }
+        }
+        observeIsland()
+    }
+
+    /// Visual checks only (`-pointDemo`): show an island state.
+    func debugIsland(_ cmd: String) {
+        let parts = cmd.split(separator: ":").map(String.init)
+        switch parts.first ?? "" {
+        case "volume": island.show(.init(kind: .volume(level: Float(parts.last ?? "0.6") ?? 0.6, muted: false), duration: 4))
+        case "brightness": island.show(.init(kind: .brightness(level: 0.7), duration: 4))
+        case "charging": island.show(.init(kind: .charging(percent: 82, charging: true), duration: 4))
+        case "low": island.show(.init(kind: .lowBattery(percent: 10), duration: 4))
+        case "bluetooth": island.show(.init(kind: .bluetooth(name: "AirPods Pro", symbol: "airpodspro", battery: 85, connected: true), duration: 5))
+        case "focus": island.show(.init(kind: .focus(name: "Work", on: true), duration: 4))
+        case "camera": island.show(.init(kind: .privacy(camera: true, on: true), duration: 4))
+        case "timerdone": island.show(.init(kind: .timerDone(label: "Pasta"), duration: 6))
+        case "meetingnow": island.show(.init(kind: .meetingNow(title: "Design review", joinURL: URL(string: "https://meet.google.com/abc-defg-hij")), duration: 6))
+        case "timer": island.timers.startTimer(seconds: Double(parts.last ?? "300") ?? 300, label: "Pasta")
+        case "notimer": island.timers.cancelTimer()
+        case "stopwatch": island.timers.stopwatchStart()
+        case "nostopwatch": island.timers.stopwatchReset()
+        case "call": island.setCall(("WhatsApp", Date().addingTimeInterval(-75)))
+        case "nocall": island.setCall(nil)
+        case "meeting": island.setMeeting(("Design review", Date().addingTimeInterval(240), URL(string: "https://zoom.us/j/1")))
+        case "nomeeting": island.setMeeting(nil)
+        case "recording": island.setRecording(true)
+        case "norecording": island.setRecording(false)
+        case "fakeplay":
+            // Show the current track as if playing (visual check without making sound).
+            if let t = island.nowPlaying.track {
+                island.nowPlaying.apply(["title": t.title, "artist": t.artist, "duration": t.duration, "elapsed": t.position(),
+                                         "playing": 1, "rate": 1.0, "timestamp": Date().timeIntervalSince1970, "bundle": t.bundleID ?? ""])
+            }
+        case "peek": notch.ui.pinned = true; notch.open(.peek)
+        case "close": notch.ui.pinned = false; notch.close()
+        default: break
+        }
+    }
+
+    private func handleIsland(_ tag: OverlayTag) {
+        switch tag {
+        case .timer(let secs, let label, let action):
+            switch action?.lowercased() {
+            case "cancel", "stop": island.timers.cancelTimer()
+            case "pause": island.timers.pauseTimer()
+            case "resume": island.timers.resumeTimer()
+            case "add": island.timers.addMinute()
+            default: if let secs { island.timers.startTimer(seconds: secs, label: label ?? "") }
+            }
+        case .stopwatch(let action):
+            switch action.lowercased() {
+            case "pause", "stop": island.timers.stopwatchPause()
+            case "reset", "clear": island.timers.stopwatchReset()
+            default: island.timers.stopwatchStart()
+            }
+        case .media(let action):
+            switch action.lowercased() {
+            case "next", "skip": island.nowPlaying.send(.next)
+            case "previous", "back": island.nowPlaying.send(.previous)
+            case "pause": island.nowPlaying.send(.pause)
+            case "play", "resume": island.nowPlaying.send(.play)
+            default: island.nowPlaying.togglePlayPause()
+            }
+        default: break
+        }
+    }
+
+    /// Resize the closed notch whenever what the island shows changes.
+    private func observeIsland() {
+        withObservationTracking {
+            _ = island.closedLayout
+            _ = island.alert
+            _ = island.closedItem
+            _ = island.hasCards
+        } onChange: { [weak self] in
+            DispatchQueue.main.async { MainActor.assumeIsolated {
+                self?.notch.refreshIsland()
+                self?.observeIsland()
+            } }
+        }
+        notch.refreshIsland()
     }
 
     /// Mirrors what Sidekick is doing into the notch's live activity.

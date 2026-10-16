@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSAppleEventsUsageDescription</key>
 	<string>Sidekick reads the current browser tab URL and can create notes when you ask it to.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Sidekick shows when your AirPods or other Bluetooth devices connect, with their battery level, in the notch.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Sidekick reads and adds calendar events when you ask it to.</string>
 	<key>NSHumanReadableCopyright</key>

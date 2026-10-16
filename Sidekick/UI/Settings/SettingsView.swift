@@ -38,6 +38,18 @@ private struct GeneralTab: View {
             Toggle("quiet mode on calls, screen sharing and focus", isOn: $s.data.quietMode)
             Toggle("let tasks run without asking (risky commands still ask)", isOn: $s.data.autoApprove)
             CalendarAccessRow()
+            Section("dynamic island") {
+                Toggle("now playing, volume, brightness & Bluetooth", isOn: $s.data.islandMedia)
+                    .onChange(of: s.data.islandMedia) { _, on in on ? env.island.nowPlaying.start() : env.island.nowPlaying.stop() }
+                Toggle("volume & brightness keys show in the notch (instead of the system pop-up)", isOn: $s.data.islandKeys)
+                Toggle("timers, stopwatch & upcoming meetings", isOn: $s.data.islandTimers)
+                Toggle("charging, battery, calls, mic & camera, screen recording", isOn: $s.data.islandSystem)
+                Toggle("file shelf (drag files onto the notch)", isOn: $s.data.islandShelf)
+                if !SystemWatchers.focusReadable {
+                    Text("Focus mode changes need Full Disk Access for Sidekick (Privacy & Security).")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
             Toggle("morning suggestions (reads calendar & connections, opt-in)", isOn: $s.data.proactiveSuggestions)
             if s.data.proactiveSuggestions {
                 Toggle("also in the afternoon", isOn: $s.data.afternoonSuggestions)

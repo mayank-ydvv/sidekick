@@ -90,6 +90,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                                                 object: nil, queue: .main) { [env] _ in
                 MainActor.assumeIsolated { env.coordinator.overlay.demo() }
             }
+            DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.mayankyadav.sidekick.island"),
+                                                                object: nil, queue: .main) { [env] n in
+                let cmd = n.object as? String ?? ""
+                MainActor.assumeIsolated { env.debugIsland(cmd) }
+            }
             DistributedNotificationCenter.default().addObserver(forName: Notification.Name("com.mayankyadav.sidekick.message"),
                                                                 object: nil, queue: .main) { [env] n in
                 let text = n.object as? String ?? "didn't catch that"

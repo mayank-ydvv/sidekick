@@ -385,3 +385,22 @@ Found by running every feature against the live Gemini API (`-featureTest`, `-ge
 - Chromium/Electron apps (Chrome, the Claude app, Slack, VS Code…): accessibility is switched on for the app so its fields can be read; otherwise select-all + paste in that field.
 - Only replaces in the app you spoke from; if you switched apps, the corrected text goes to the clipboard instead.
 - Fixed synthetic shortcuts (⌘A, ⌘V, agent key presses) releasing with modifiers still "held" — this left ⌘/⇧ stuck (likely cause of earlier all-caps typing) and stalled pastes.
+
+## 0.12.0 — Dynamic Island
+- Now Playing from any app (Music, Spotify, YouTube in a browser…) via a tiny helper loaded by the system perl (MediaRemote is closed to third-party apps since macOS 15.4): album art + artwork-tinted waveform in the closed notch; hover card with scrubber, play/pause, next/previous, source app.
+- Volume & brightness keys show their level in the notch (instead of the system pop-up); falls back to macOS when a device can't be controlled.
+- AirPods/Bluetooth connect & disconnect with battery %, charging and low battery, mic/camera in use, ongoing calls with duration (FaceTime, Zoom, Teams, WhatsApp, Discord, Slack, Meet…), screen recording (with Stop), Focus changes (needs Full Disk Access).
+- Timer and stopwatch (voice: "set a 10 minute timer for pasta", "start a stopwatch"), music by voice ("next song", "pause the music"), next-meeting countdown with a Join button and a "starting now" alert.
+- File shelf: drag files onto the notch, drag them out later or AirDrop them.
+- Screens without a notch get a matching one: MacBook-notch width, exactly the menu bar's height, attached to the top edge.
+- Settings → General → Dynamic Island toggles for each group.
+
+## 0.12.1
+- Calls are detected only when the calling app itself is using the microphone (CoreAudio per-process input), so a screen recording with the mic while WhatsApp is open no longer shows a WhatsApp call; it shows as a recording.
+- Island animations: the shape grows smoothly out of the notch and then the content fades in from a blur; on the way out the content fades first and the shape folds back slowly; switching items crossfades.
+
+## 0.12.2
+- Bluetooth alerts only for headphones/speakers and keyboards/mice/trackpads, never for iPhones, Watches, iPads or Macs (they connect silently for Handoff/Continuity); only after the device stays connected 2.5 s; not repeated within a minute; no keyboard/mouse alerts right after wake; disconnect alerts only for announced audio devices that stay disconnected.
+
+## 0.12.3
+- Fixed "still warming up my ears" forever: the speech model now loads from disk without a network check (launching at login before Wi-Fi made the load fail), retries automatically with backoff and after wake, and pressing the talk keys while it isn't ready triggers a reload. Clearer message during the one-time ~1 min optimization after an update.

@@ -49,6 +49,12 @@ struct SettingsData: Codable, Equatable {
     var agentFolders: [String] = []
     /// Tasks run without asking (computer use, overwrites, connector actions, shell). Risky shell commands still ask.
     var autoApprove = true
+    // Dynamic Island
+    var islandMedia = true        // now playing, volume/brightness, Bluetooth
+    var islandTimers = true       // timers, stopwatch, meetings
+    var islandSystem = true       // charging, battery, Focus, mic/camera, calls, screen recording
+    var islandShelf = true        // drop files on the notch
+    var islandKeys = true         // volume/brightness keys show in the notch instead of the system pop-up
     // Privacy
     var readBrowserURL = true
     var onboardingDone = false
@@ -95,6 +101,11 @@ extension SettingsData {
         if let v = try? c.decodeIfPresent(type(of: quietMode), forKey: .quietMode) { quietMode = v }
         if let v = try? c.decodeIfPresent(type(of: onboardingDone), forKey: .onboardingDone) { onboardingDone = v }
         if let v = try? c.decodeIfPresent(type(of: autoApprove), forKey: .autoApprove) { autoApprove = v }
+        if let v = try? c.decodeIfPresent(type(of: islandMedia), forKey: .islandMedia) { islandMedia = v }
+        if let v = try? c.decodeIfPresent(type(of: islandTimers), forKey: .islandTimers) { islandTimers = v }
+        if let v = try? c.decodeIfPresent(type(of: islandSystem), forKey: .islandSystem) { islandSystem = v }
+        if let v = try? c.decodeIfPresent(type(of: islandShelf), forKey: .islandShelf) { islandShelf = v }
+        if let v = try? c.decodeIfPresent(type(of: islandKeys), forKey: .islandKeys) { islandKeys = v }
     }
 }
 

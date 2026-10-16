@@ -14,20 +14,39 @@ actor WhisperKitSTT: STTProvider {
     }
 
     var isReady: Bool { kit != nil }
+    private(set) var isLoading = false
+
+    /// A complete, previously downloaded model folder (all three Core ML parts present), if any.
+    nonisolated static func localModel(_ model: WhisperModel, base: URL = modelsDirectory) -> URL? {
+        let dir = base.appendingPathComponent("models/argmaxinc/whisperkit-coreml/\(model.rawValue)", isDirectory: true)
+        let parts = ["AudioEncoder.mlmodelc", "TextDecoder.mlmodelc", "MelSpectrogram.mlmodelc", "config.json"]
+        let ok = parts.allSatisfy { FileManager.default.fileExists(atPath: dir.appendingPathComponent($0).path) }
+        return ok ? dir : nil
+    }
 
     /// Downloads (if needed), loads and warms the model. Progress is reported on the main actor.
     func load(_ model: WhisperModel, progress: @escaping @Sendable (LoadState) -> Void) async {
         if loadedModel == model, kit != nil { progress(.ready); return }
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
         kit = nil
         loadedModel = nil
         do {
             try FileManager.default.createDirectory(at: Self.modelsDirectory, withIntermediateDirectories: true)
-            progress(.downloading(0))
-            let folder = try await WhisperKit.download(
-                variant: model.rawValue,
-                downloadBase: Self.modelsDirectory,
-                progressCallback: { p in progress(.downloading(p.fractionCompleted)) }
-            )
+            // Use the copy already on disk — no network needed (launching at login before Wi-Fi is up used to
+            // fail here and leave Sidekick "warming up" forever).
+            let folder: URL
+            if let local = Self.localModel(model) {
+                folder = local
+            } else {
+                progress(.downloading(0))
+                folder = try await WhisperKit.download(
+                    variant: model.rawValue,
+                    downloadBase: Self.modelsDirectory,
+                    progressCallback: { p in progress(.downloading(p.fractionCompleted)) }
+                )
+            }
             progress(.loading)
             let config = WhisperKitConfig(
                 model: model.rawValue,

@@ -11,6 +11,10 @@ final class TalkCoordinator {
     var onType: ((String) -> Void)?
     /// Replaces the user's selection / focused field; returns false when there's no editable field.
     var onReplace: ((String, pid_t?) async -> Bool)?
+    /// Dynamic Island controls (timers, stopwatch, media) from voice.
+    var onIsland: ((OverlayTag) -> Void)?
+    /// The speech model isn't loaded (e.g. a load failed): ask the app to load it.
+    var onSTTNotReady: (() -> Void)?
     /// The text field the user was writing in when they pressed the talk hotkey.
     private var fieldAtPress: TextInserter.FieldSnapshot?
     private var pressFrontApp: pid_t?
@@ -314,7 +318,11 @@ final class TalkCoordinator {
             return resumeLessonOr { didntCatch() }
         }
         guard await stt.isReady else {
-            return show(message: "still warming up my ears… try again in a sec")
+            onSTTNotReady?()   // (re)load the speech model if it isn't loading already
+            if case .downloading(let p) = state.whisper {
+                return show(message: "downloading my speech model (\(Int(p * 100))%) — one moment")
+            }
+            return show(message: "getting my ears ready — the first start after an update takes about a minute")
         }
 
         let sttStart = now
@@ -473,7 +481,7 @@ final class TalkCoordinator {
                     case .tag(let tag):
                         if DebugFlags.verbose { print("TAG \(tag)"); fflush(stdout) }
                         switch tag {
-                        case .agent, .type, .replace, .setting: tookAction = true
+                        case .agent, .type, .replace, .setting, .timer, .stopwatch, .media: tookAction = true
                         default: break
                         }
                         if let t = handle(tag, screen: shot) { annotationTasks.append(t) }
@@ -664,6 +672,8 @@ final class TalkCoordinator {
             break   // already on the smart model
         case .type(let text):
             onType?(text)
+        case .timer, .stopwatch, .media:
+            onIsland?(tag)
         case .replace(let text):
             let onReplace = onReplace
             let pressApp = fieldAtPress?.pid ?? pressFrontApp

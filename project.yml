@@ -47,7 +47,25 @@ targets:
         NSAppleEventsUsageDescription: "Sidekick reads the current browser tab URL and can create notes when you ask it to."
         NSCalendarsFullAccessUsageDescription: "Sidekick reads and adds calendar events when you ask it to."
         NSRemindersFullAccessUsageDescription: "Sidekick reads and adds reminders when you ask it to."
+        NSBluetoothAlwaysUsageDescription: "Sidekick shows when your AirPods or other Bluetooth devices connect, with their battery level, in the notch."
         NSHumanReadableCopyright: "© 2026 Mayank Yadav"
+    postCompileScripts:
+      - name: Build now-playing helper
+        # A tiny dylib the system perl loads to read MediaRemote (third-party apps can't since macOS 15.4).
+        script: |
+          set -e
+          OUT="$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH"
+          mkdir -p "$OUT"
+          clang -dynamiclib -fobjc-arc -O2 -arch arm64 -mmacosx-version-min=14.2 -framework Foundation -framework AppKit \
+            "$PROJECT_DIR/Helpers/NowPlaying/NowPlayingAdapter.m" -o "$OUT/NowPlayingAdapter.dylib"
+          codesign --force --sign - "$OUT/NowPlayingAdapter.dylib"
+          cp "$PROJECT_DIR/Helpers/NowPlaying/nowplaying.pl" "$OUT/nowplaying.pl"
+        inputFiles:
+          - $(PROJECT_DIR)/Helpers/NowPlaying/NowPlayingAdapter.m
+          - $(PROJECT_DIR)/Helpers/NowPlaying/nowplaying.pl
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/NowPlayingAdapter.dylib
+          - $(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/nowplaying.pl
     entitlements:
       path: Sidekick/Sidekick.entitlements
       properties:

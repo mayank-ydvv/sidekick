@@ -86,16 +86,39 @@ final class NotchUIState {
 
     var targetSize: CGSize {
         switch size {
-        case .closed: activity == .none ? CGSize(width: notch.width + Self.ear * 2, height: notch.height)
-                    : isMessage ? CGSize(width: Self.messageWidth, height: notch.height + messageStrip)
-                    : CGSize(width: Self.activityWidth, height: notch.height)
-        case .peek: Self.peekSize
+        case .closed: closedSize
+        case .peek: peekSize
         case .compact: Self.compactSize
         case .expanded: expandedSize
         }
     }
 
-    var cornerRadius: CGFloat { size == .closed ? 10 : 22 }
+    var cornerRadius: CGFloat { size == .closed ? (closedSize.height > notch.height ? 14 : 10) : 22 }
+
+    /// Dynamic Island content (music, timers, alerts…) shown when Sidekick itself is idle.
+    var island: IslandHub?
+    /// What the closed island currently shows. Lags behind the hub on purpose so it can animate: the shape grows
+    /// first and the content fades in; on the way out the content fades first and then the shape shrinks.
+    var islandLayout: IslandLayout?
+    var islandAlert: IslandAlert?
+    var islandItem: IslandLive?
+    var islandContentVisible = false
+
+    /// The closed shape: plain notch, Sidekick's own activity, or island content (sides / strip below).
+    var closedSize: CGSize {
+        if activity != .none {
+            return isMessage ? CGSize(width: Self.messageWidth, height: notch.height + messageStrip)
+                             : CGSize(width: Self.activityWidth, height: notch.height)
+        }
+        switch islandLayout {
+        case .sides: return CGSize(width: Self.activityWidth, height: notch.height)
+        case .strip(let h): return CGSize(width: Self.messageWidth, height: notch.height + h)
+        case nil: return CGSize(width: notch.width + Self.ear * 2, height: notch.height)
+        }
+    }
+
+    /// Hover: island cards when something's live, otherwise the chat preview.
+    var peekSize: CGSize { island?.hasCards == true ? island!.peekSize(notchHeight: notch.height) : Self.peekSize }
 
     /// Size the content is laid out at. Set instantly (no animation) when opening, so the chat
     /// never re-lays out during the morph — only the mask/shape animates.
@@ -139,25 +162,90 @@ final class NotchController {
 
     /// The closed panel is wide enough for the live-activity pill (transparent beyond the shape).
     private var closedFrameSize: CGSize {
-        ui.isMessage ? CGSize(width: NotchUIState.messageWidth, height: geometry.rect.height + ui.messageStrip)
-                     : CGSize(width: NotchUIState.activityWidth, height: geometry.rect.height)
+        let c = ui.closedSize
+        return CGSize(width: max(NotchUIState.activityWidth, c.width), height: max(geometry.rect.height, c.height))
+    }
+
+    private var lastClosedFrame: CGSize = .zero
+
+    /// Island content changed while closed: grow the (transparent) panel before the shape grows, shrink it after
+    /// the shape has shrunk, so the panel never blocks clicks below the notch longer than needed.
+    // MARK: Island animation
+
+    static let islandGrow = Animation.spring(response: 0.7, dampingFraction: 0.82)
+    static let islandShrink = Animation.spring(response: 0.6, dampingFraction: 0.92)
+    private var islandHideWork: DispatchWorkItem?
+
+    /// Moves the closed island toward what the hub wants to show, with iPhone-like timing.
+    func refreshIsland() {
+        guard let hub = ui.island else { return }
+        let layout = hub.closedLayout
+        if let layout {
+            islandHideWork?.cancel(); islandHideWork = nil
+            let appearing = ui.islandLayout == nil || !ui.islandContentVisible
+            if appearing {
+                ui.islandAlert = hub.alert
+                ui.islandItem = hub.closedItem
+                if ui.islandLayout == nil { ui.islandContentVisible = false }
+                withAnimation(Self.islandGrow) { ui.islandLayout = layout }
+                refreshClosed()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self] in
+                    guard let self, self.ui.islandLayout != nil else { return }
+                    withAnimation(.easeOut(duration: 0.5)) { self.ui.islandContentVisible = true }
+                }
+            } else {
+                // Switching content (music → timer, alert → music): crossfade, and morph the shape if needed.
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    ui.islandAlert = hub.alert
+                    ui.islandItem = hub.closedItem
+                }
+                if layout != ui.islandLayout {
+                    withAnimation(Self.islandGrow) { ui.islandLayout = layout }
+                    refreshClosed()
+                }
+            }
+        } else if ui.islandLayout != nil, islandHideWork == nil {
+            // Fade the content out first, then fold the shape back into the notch.
+            withAnimation(.easeIn(duration: 0.35)) { ui.islandContentVisible = false }
+            let w = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                self.islandHideWork = nil
+                guard self.ui.island?.closedLayout == nil else { self.refreshIsland(); return }
+                withAnimation(Self.islandShrink) { self.ui.islandLayout = nil }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.65) { [weak self] in
+                    guard let self, self.ui.islandLayout == nil else { return }
+                    self.ui.islandAlert = nil
+                    self.ui.islandItem = nil
+                    self.refreshClosed()
+                }
+            }
+            islandHideWork = w
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: w)
+        }
+    }
+
+    func refreshClosed() {
+        guard !ui.isOpen else { return }
+        let target = closedFrameSize
+        guard target != lastClosedFrame else { return }
+        if target.height >= lastClosedFrame.height {
+            panel.setFrame(frame(for: target), display: true)
+            lastClosedFrame = target
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
+                guard let self, !self.ui.isOpen else { return }
+                let now = self.closedFrameSize
+                self.panel.setFrame(self.frame(for: now), display: true)
+                self.lastClosedFrame = now
+            }
+        }
     }
 
     /// Shows / clears the live activity in the closed notch.
     func setActivity(_ a: NotchUIState.Activity) {
         guard a != ui.activity else { return }
-        let wasMessage = ui.isMessage
         withAnimation(Motion.smooth) { ui.activity = a }
-        guard !ui.isOpen, wasMessage != ui.isMessage || ui.isMessage else { return }
-        // Grow the (transparent) panel before the message strip animates in; shrink it after it animates out.
-        if ui.isMessage {
-            panel.setFrame(frame(for: closedFrameSize), display: true)
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                guard let self, !self.ui.isOpen, !self.ui.isMessage else { return }
-                self.panel.setFrame(self.frame(for: self.closedFrameSize), display: true)
-            }
-        }
+        refreshClosed()
     }
 
     func content() -> AnyView { makeContent(self) }
@@ -249,7 +337,7 @@ final class NotchController {
         let from = ui.targetSize
         let to: CGSize = {
             switch target {
-            case .peek: NotchUIState.peekSize
+            case .peek: ui.peekSize
             case .compact: NotchUIState.compactSize
             case .expanded: ui.expandedSize
             case .closed: closedFrameSize
@@ -285,6 +373,7 @@ final class NotchController {
                 self.ui.size = .closed
             }
             self.scheduleShrink(to: self.closedFrameSize)
+            self.lastClosedFrame = self.closedFrameSize
         }
         ui.inputFocused = false
         ui.wantsTyping = false
